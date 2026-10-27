@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<meta name="theme-color" content="#0b0d14" />
+<title>صيّاد الظلال</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+html,body{margin:0;height:100%;background:#0b0d14;color:#e8e6f0;font-family:Tahoma,"Segoe UI",Arial,sans-serif;overflow:hidden;touch-action:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hidden{display:none!important}
+#hud{position:fixed;top:0;left:0;right:0;padding:8px 10px;pointer-events:none;z-index:5}
+#info{font-size:13px;display:flex;justify-content:space-between;gap:8px;text-shadow:0 1px 2px #000;margin-bottom:4px}
+.bar{height:10px;background:#222;border-radius:6px;overflow:hidden;margin-top:3px;border:1px solid #333}
+.bar>i{display:block;height:100%;width:100%;transition:width .15s}
+#hp>i{background:#e0523a}#mp>i{background:#4a8cff}#xp>i{background:#e6c35a}
+#wave{position:fixed;top:70px;width:100%;text-align:center;font-size:18px;text-shadow:0 2px 4px #000;pointer-events:none;z-index:5}
+#joy{position:fixed;left:24px;bottom:24px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.07);border:2px solid rgba(255,255,255,.2);touch-action:none;z-index:5}
+#knob{position:absolute;left:37px;top:37px;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.3);pointer-events:none}
+#atk{position:fixed;right:24px;bottom:24px;width:96px;height:96px;border-radius:50%;border:none;background:#7a2fd1;color:#fff;font-size:18px;font-weight:bold;z-index:5;touch-action:none;font-family:inherit;box-shadow:0 4px 12px #0008}
+#skills{position:fixed;right:24px;bottom:136px;display:flex;flex-direction:column;gap:10px;z-index:5}
+.sk{width:64px;height:64px;border-radius:14px;border:2px solid #6c5cb0;background:#1d1830;color:#fff;font-size:11px;position:relative;overflow:hidden;touch-action:none;font-family:inherit}
+.sk .cd{position:absolute;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;font-size:20px}
+.sk.cool .cd{display:flex}
+.screen{position:fixed;inset:0;background:rgba(8,9,16,.94);display:flex;flex-direction:column;padding:16px;overflow:auto;z-index:10}
+#panel{z-index:11}
+.box{width:100%;max-width:420px;background:#14121f;border:1px solid #3a2f60;border-radius:16px;padding:14px;margin:auto}
+h1{margin:4px 0 8px;color:#e6c35a;font-size:28px;text-align:center}
+h2{margin:4px 0 8px;color:#e6c35a}
+h3{margin:14px 0 6px;color:#b9a8ff}
+.btn{display:block;width:100%;padding:13px;margin:6px 0;border-radius:12px;border:1px solid #4a3f78;background:#1d1830;color:#fff;font-size:16px;font-family:inherit}
+.btn:disabled{opacity:.4}
+.mini{padding:6px 10px;border-radius:8px;border:1px solid #4a3f78;background:#1d1830;color:#fff;font-family:inherit}
+.mini:disabled{opacity:.4}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #22203a;font-size:15px}
+.small{font-size:13px;color:#aaa}
+.rar-common{color:#ddd}.rar-rare{color:#4a8cff}.rar-epic{color:#b26cff}
+#toast{position:fixed;top:110px;left:50%;transform:translateX(-50%);background:rgba(20,18,31,.95);border:1px solid #6c5cb0;padding:10px 16px;border-radius:12px;z-index:20;font-size:15px;white-space:nowrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="info"><span id="lbl"></span><span id="gold"></span></div>
+  <div class="bar" id="hp"><i></i></div>
+  <div class="bar" id="mp"><i></i></div>
+  <div class="bar" id="xp"><i></i></div>
+</div>
+<div id="wave" class="hidden"></div>
+<div id="joy" class="hidden"><div id="knob"></div></div>
+<div id="skills" class="hidden"></div>
+<button id="atk" class="hidden">ضرب</button>
+<div id="toast" class="hidden"></div>
+<div id="menu" class="screen"></div>
+<div id="panel" class="screen hidden"></div>
+
+<script>
+const KEY = 'sayyad_v1';
+const $ = id => document.getElementById(id);
+const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
+
+const cv = $('c'), g = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------- البيانات الثابتة ---------- */
+const CLASSES = {
+  warrior: { name: 'مقاتل', col: '#e0523a', str: 3, agi: 1, def: 2, int: 0 },
+  hunter:  { name: 'رامٍ', col: '#5ec96b', str: 1, agi: 3, def: 1, int: 1 },
+  mage:    { name: 'ساحر ظلال', col: '#4a8cff', str: 0, agi: 1, def: 1, int: 4 }
+};
+const KINDS = {
+  slime:  { name: 'وحش هلامي', hp: 30,  dmg: 6,  spd: 60,  r: 14, xp: 8,   gold: 3,  col: '#5ec96b', ext: false },
+  wolf:   { name: 'ذئب',       hp: 45,  dmg: 9,  spd: 110, r: 14, xp: 14,  gold: 6,  col: '#9aa3b5', ext: true },
+  goblin: { name: 'غوبلن',     hp: 60,  dmg: 10, spd: 90,  r: 15, xp: 18,  gold: 9,  col: '#b35cc9', ext: true },
+  golem:  { name: 'حجري',      hp: 110, dmg: 14, spd: 40,  r: 20, xp: 25,  gold: 12, col: '#c9a25a', ext: true },
+  boss:   { name: 'حارس البوابة', hp: 400, dmg: 20, spd: 70, r: 28, xp: 120, gold: 80, col: '#e0523a', ext: true, boss: true }
+};
+const SKILLS = {
+  strike: { name: 'ضربة قوية', lvl: 1, mp: 8,  cd: 3,  dmg: 2.2, r: 120, type: 'single' },
+  whirl:  { name: 'دوامة',     lvl: 3, mp: 15, cd: 6,  dmg: 1.5, r: 110, type: 'aoe' },
+  heal:   { name: 'ترميم',     lvl: 5, mp: 20, cd: 12, type: 'heal' },
+  surge:  { name: 'انفجار الظل', awk: true, mp: 30, cd: 15, dmg: 3, r: 170, type: 'aoe' }
+};
+const RANKS = [[1, 'E'], [5, 'D'], [10, 'C'], [15, 'B'], [20, 'A'], [30, 'S']];
+const SHADOW_NAMES = { wolf: 'ظل ذئب', goblin: 'ظل غوبلن', golem: 'ظل حجري', boss: 'ظل حارس' };
+const RARITY = {
+  common: { n: 'عادي', m: 1,   },
+  rare:   { n: 'نادر', m: 1.6 },
+  epic:   { n: 'ملحمي', m: 2.5 }
+};
+const GEAR = { weapon: ['سيف', 'فأس', 'خنجر', 'قوس'], armor: ['درع', 'صدرية', 'خوذة', 'عباءة'] };
+const QUESTS = [
+  { id: 'k10', t: 'اقتل 10 وحوش',            need: () => S.kills >= 10,      rw: { gold: 50,  xp: 30 } },
+  { id: 'g1',  t: 'أكمل بوابة واحدة',         need: () => S.clears >= 1,      rw: { gold: 100 } },
+  { id: 's1',  t: 'استخرج ظلًا واحدًا',       need: () => S.shadows.length >= 1, rw: { xp: 50 } },
+  { id: 'l5',  t: 'بلغ المستوى 5',           need: () => S.p.level >= 5,     rw: { gold: 150 } },
+  { id: 'b2',  t: 'أكمل بوابة من المستوى 2', need: () => S.maxTier >= 2,     rw: { gold: 250, xp: 100 } }
+];
+
+/* ---------- الحالة ---------- */
+let S = null, run = null, floats = [], toastTimer = 0, panelKind = null;
+const input = { x: 0, y: 0 };
+const keys = {};
+let attackHeld = false, jId = null;
+
+function defaultState(cls) {
+  const c = CLASSES[cls];
+  return {
+    cls,
+    p: { level: 1, xp: 0, gold: 0, pts: 0, str: 5 + c.str, agi: 5 + c.agi, def: 5 + c.def, int: 5 + c.int,
+         hp: 0, mp: 0, awk: false, weapon: null, armor: null },
+    inv: [], shadows: [], active: [], quests: {}, kills: 0, clears: 0, maxTier: 0
+  };
+}
+
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); }
+  catch (e) { toast('تعذر حفظ التقدم في هذا المتصفح'); }
+}
+function load() {
+  try { const r = localStorage.getItem(KEY); return r ? JSON.parse(r) : null; }
+  catch (e) { return null; }
+}
+
+/* ---------- الحسابات ---------- */
+const armorDef = () => S.p.armor ? S.p.armor.v : 0;
+const weaponAtk = () => S.p.weapon ? S.p.weapon.v : 0;
+const mult = () => S.p.awk ? 1.25 : 1;
+const maxHp = () => Math.round((60 + (S.p.def + armorDef()) * 6 + S.p.level * 8) * mult());
+const maxMp = () => Math.round((30 + S.p.int * 6) * (S.p.awk ? 1.2 : 1));
+const atkDmg = () => (6 + S.p.str * 2 + S.p.agi * 0.5 + weaponAtk()) * mult();
+const defVal = () => S.p.def + armorDef();
+const atkCd = () => Math.max(0.25, 0.6 - S.p.agi * 0.01);
+const moveSpd = () => 120 + S.p.agi * 2;
+const xpNeed = l => 50 + l * 35;
+const armyLimit = () => 1 + Math.floor(S.p.level / 4);
+function rankOf(l) { let r = 'E'; for (const [t, n] of RANKS) if (l >= t) r = n; return r; }
+function available(k) { const s = SKILLS[k]; return s.awk ? S.p.awk : S.p.level >= s.lvl; }
+
+function toast(t) {
+  const el = $('toast');
+  el.textContent = t;
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 2200);
+}
+function floatText(x, y, txt, col) { floats.push({ x, y, txt: String(txt), col, t: 0.9 }); }
+
+function gainXp(x) {
+  S.p.xp += x;
+  let up = false;
+  while (S.p.xp >= xpNeed(S.p.level)) {
+    S.p.xp -= xpNeed(S.p.level);
+    S.p.level++; S.p.pts += 3; up = true;
+  }
+  if (up) {
+    S.p.hp = maxHp(); S.p.mp = maxMp();
+    toast('ارتفع المستوى إلى ' + S.p.level + ' — الرتبة ' + rankOf(S.p.level));
+    renderSkills();
+  }
+}
+
+function checkQuests() {
+  let got = false;
+  for (const q of QUESTS) {
+    if (!S.quests[q.id] && q.need()) {
+      S.quests[q.id] = true;
+      if (q.rw.gold) S.p.gold += q.rw.gold;
+      if (q.rw.xp) gainXp(q.rw.xp);
+      toast('مهمة مكتملة: ' + q.t);
+      got = true;
+    }
+  }
+  if (got) save();
+}
+
+/* ---------- الغنائم والظلال ---------- */
+function dropItem(r) {
+  if (S.inv.length >= 20) { toast('الحقيبة ممتلئة'); return; }
+  const slot = Math.random() < 0.5 ? 'weapon' : 'armor';
+  const list = GEAR[slot];
+  const base = list[Math.floor(Math.random() * list.length)];
+  const v = Math.round((slot === 'weapon' ? 4 + S.p.level * 1.5 : 3 + S.p.level) * RARITY[r].m);
+  S.inv.push({ id: uid(), slot, name: base, rarity: r, v });
+  toast('غنيمة: ' + base + ' ' + RARITY[r].n);
+}
+
+function addShadow(kind, boss) {
+  if (S.shadows.length >= 60) return;
+  const r = Math.random();
+  const rarity = boss ? (Math.random() < 0.6 ? 'epic' : 'rare') : (r < 0.7 ? 'common' : r < 0.95 ? 'rare' : 'epic');
+  S.shadows.push({ id: uid(), kind, name: SHADOW_NAMES[kind], rarity });
+  toast('استخرجت ' + SHADOW_NAMES[kind] + ' (' + RARITY[rarity].n + ')');
+  save();
+}
+
+function makeAlly(s) {
+  const k = KINDS[s.kind], m = RARITY[s.rarity].m;
+  const hp = Math.round(k.hp * 0.5 * m);
+  return { x: run.p.x + (Math.random() * 40 - 20), y: run.p.y + 30, hp, maxHp: hp, dmg: k.dmg * 0.8 * m,
+           spd: 150, r: 11, cd: 0, flash: 0, dead: false, name: s.name, col: '#8f7cff' };
+}
+
+/* ---------- القتال ---------- */
+function hitEnemy(e, dmg, col) {
+  if (e.dead) return;
+  const d = Math.max(1, Math.round(dmg * (0.9 + Math.random() * 0.2)));
+  e.hp -= d; e.flash = 0.12;
+  floatText(e.x, e.y - e.r - 6, d, col || '#fff');
+  if (e.hp <= 0) killEnemy(e);
+}
+
+function killEnemy(e) {
+  if (e.dead) return;
+  e.dead = true;
+  S.p.gold += e.gold;
+  S.kills++;
+  gainXp(e.xp);
+  floatText(e.x, e.y - e.r - 20, '+' + e.xp + ' XP', '#e6c35a');
+  const k = KINDS[e.kind];
+  if (k.ext) {
+    const ch = e.boss ? 1 : 0.12 + S.p.int * 0.01;
+    if (Math.random() < ch) addShadow(e.kind, e.boss);
+  }
+  if (e.boss) dropItem('epic');
+  else if (Math.random() < 0.2) dropItem(Math.random() < 0.2 ? 'rare' : 'common');
+  checkQuests();
+}
+
+function hurtPlayer(raw) {
+  const d = Math.max(1, Math.round(raw * (1 - Math.min(0.6, defVal() * 0.02))));
+  S.p.hp -= d;
+  run.p.flash = 0.15;
+  floatText(run.p.x, run.p.y - 24, '-' + d, '#ff7a6a');
+  if (S.p.hp <= 0) playerDied();
+}
+
+function playerAttack() {
+  if (!run || run.p.atkT > 0) return;
+  run.p.atkT = atkCd();
+  run.p.swing = 0.15;
+  for (const e of [...run.enemies]) {
+    if (!e.dead && dist(e.x, e.y, run.p.x, run.p.y) < e.r + 70) hitEnemy(e, atkDmg(), '#fff');
+  }
+}
+
+function useSkill(k) {
+  if (!run || !available(k)) return;
+  const s = SKILLS[k];
+  if ((run.cd[k] || 0) > 0) return;
+  if (S.p.mp < s.mp) { toast('المانا غير كافية'); return; }
+  S.p.mp -= s.mp;
+  run.cd[k] = s.cd;
+  const p = run.p;
+  if (s.type === 'heal') {
+    S.p.hp = Math.min(maxHp(), S.p.hp + Math.round(maxHp() * 0.35));
+    floatText(p.x, p.y - 26, 'ترميم', '#7dffb0');
+    return;
+  }
+  const col = k === 'surge' ? '#b26cff' : '#ffd27a';
+  run.fx.push({ x: p.x, y: p.y, max: s.r, t: 0.3, col });
+  let list = run.enemies.filter(e => !e.dead && dist(e.x, e.y, p.x, p.y) < s.r + e.r);
+  if (s.type === 'single') {
+    list.sort((a, b) => dist(a.x, a.y, p.x, p.y) - dist(b.x, b.y, p.x, p.y));
+    list = list.slice(0, 1);
+  }
+  const base = atkDmg();
+  for (const e of list) hitEnemy(e, base * s.dmg, col);
+}
+
+function playerDied() {
+  S.p.gold = Math.floor(S.p.gold * 0.9);
+  toast('سقطت في البوابة — خسرت 10% من الذهب');
+  endRun();
+}
+
+function endRun() {
+  run = null;
+  S.p.hp = maxHp(); S.p.mp = maxMp();
+  save();
+  showMenu(true);
+}
+
+function completeGate() {
+  const t = run.tier;
+  S.clears++;
+  S.maxTier = Math.max(S.maxTier, t);
+  S.p.gold += 40 * t;
+  run = null;
+  S.p.hp = maxHp(); S.p.mp = maxMp();
+  gainXp(60 * t);
+  toast('أكملت بوابة المستوى ' + t + '!');
+  checkQuests();
+  save();
+  showMenu(true);
+}
+
+/* ---------- البوابات والموجات ---------- */
+function spawnEnemy(kind, tier) {
+  const k = KINDS[kind];
+  const sc = 1 + (tier - 1) * 0.35, dm = 1 + (tier - 1) * 0.2;
+  let x, y, tries = 0;
+  do {
+    x = 40 + Math.random() * (W - 80);
+    y = 40 + Math.random() * (H - 80);
+    tries++;
+  } while (dist(x, y, run.p.x, run.p.y) < 220 && tries < 30);
+  run.enemies.push({
+    kind, boss: !!k.boss, x, y,
+    hp: Math.round(k.hp * sc), maxHp: Math.round(k.hp * sc),
+    dmg: k.dmg * dm, spd: k.spd, r: k.r,
+    xp: Math.round(k.xp * sc), gold: Math.round(k.gold * sc),
+    col: k.col, cd: 0, flash: 0, dead: false
+  });
+}
+
+function spawnWave() {
+  run.wave++;
+  const pool = ['slime'];
+  if (run.tier >= 2) pool.push('wolf', 'goblin');
+  if (run.tier >= 3) pool.push('golem');
+  const n = 3 + run.tier + run.wave;
+  for (let i = 0; i < n; i++) spawnEnemy(pool[Math.floor(Math.random() * pool.length)], run.tier);
+}
+
+function spawnBoss() {
+  spawnEnemy('boss', run.tier);
+  toast('ظهر حارس البوابة!');
+}
+
+function enterGate(t) {
+  if (run || !S) return;
+  const pillars = [];
+  for (let i = 0; i < 4; i++) {
+    const pw = 50 + Math.random() * 50, ph = 50 + Math.random() * 50;
+    pillars.push({ x: W * 0.15 + Math.random() * (W * 0.7 - pw), y: H * 0.2 + Math.random() * (H * 0.4 - ph), w: pw, h: ph });
+  }
+  run = {
+    tier: t, wave: 0, waves: 2 + t, enemies: [], allies: [], pillars,
+    boss: false, timer: 1.5, cd: {}, fx: [],
+    p: { x: W / 2, y: H * 0.75, atkT: 0, swing: 0, face: 0, flash: 0 }
+  };
+  S.p.hp = maxHp(); S.p.mp = maxMp();
+  S.active = S.active.filter(id => S.shadows.some(s => s.id === id)).slice(0, armyLimit());
+  for (const id of S.active) run.allies.push(makeAlly(S.shadows.find(s => s.id === id)));
+  floats = [];
+  closePanel();
+  $('menu').classList.add('hidden');
+  setPlaying(true);
+  renderSkills();
+  toast('دخلت بوابة المستوى ' + t);
+}
+
+function resolve(o, r) {
+  o.x = clamp(o.x, 10 + r, W - 10 - r);
+  o.y = clamp(o.y, 10 + r, H - 10 - r);
+  for (const q of run.pillars) {
+    const cx = clamp(o.x, q.x, q.x + q.w), cy = clamp(o.y, q.y, q.y + q.h);
+    const dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);
+    if (d < r && d > 0) { const k = (r - d) / d; o.x += dx * k; o.y += dy * k; }
+    else if (d === 0) { o.y = q.y - r; }
+  }
+}
+
+/* ---------- التحديث ---------- */
+function update(dt) {
+  const p = run.p;
+  S.p.mp = Math.min(maxMp(), S.p.mp + dt * (2 + S.p.int * 0.2));
+
+  const len = Math.hypot(input.x, input.y);
+  if (len > 0.05) {
+    const k = Math.min(1, len);
+    p.x += (input.x / len) * moveSpd() * k * dt;
+    p.y += (input.y / len) * moveSpd() * k * dt;
+    p.face = Math.atan2(input.y, input.x);
+  }
+  resolve(p, 14);
+  p.atkT -= dt;
+  p.swing = Math.max(0, p.swing - dt);
+  p.flash = Math.max(0, p.flash - dt);
+  for (const k in run.cd) run.cd[k] = Math.max(0, run.cd[k] - dt);
+  run.fx.forEach(f => f.t -= dt);
+  run.fx = run.fx.filter(f => f.t > 0);
+
+  // الوحوش
+  for (const e of run.enemies) {
+    if (e.dead) continue;
+    e.flash = Math.max(0, e.flash - dt);
+    e.cd -= dt;
+    const d = dist(e.x, e.y, p.x, p.y);
+    let hitAlly = false;
+    for (const a of run.allies) {
+      if (!a.dead && dist(e.x, e.y, a.x, a.y) < e.r + a.r + 3) {
+        hitAlly = true;
+        if (e.cd <= 0) {
+          e.cd = 1;
+          a.hp -= e.dmg * 0.8; a.flash = 0.12;
+          if (a.hp <= 0) { a.dead = true; floatText(a.x, a.y - 12, 'سقط ظل', '#b9a8ff'); }
+        }
+      }
+    }
+    if (!hitAlly && d > e.r + 14) {
+      const an = Math.atan2(p.y - e.y, p.x - e.x);
+      e.x += Math.cos(an) * e.spd * dt;
+      e.y += Math.sin(an) * e.spd * dt;
+    }
+    resolve(e, e.r);
+    if (!hitAlly && d < e.r + 16 && e.cd <= 0) {
+      e.cd = 1;
+      hurtPlayer(e.dmg);
+      if (!run) return;
+    }
+  }
+
+  // الظلال المستدعاة
+  for (const a of run.allies) {
+    if (a.dead) continue;
+    a.cd -= dt;
+    a.flash = Math.max(0, a.flash - dt);
+    let t = null, bd = 1e9;
+    for (const e of run.enemies) {
+      if (e.dead) continue;
+      const d = dist(a.x, a.y, e.x, e.y);
+      if (d < bd) { bd = d; t = e; }
+    }
+    if (t && bd < 260) {
+      if (bd > a.r + t.r + 6) {
+        const an = Math.atan2(t.y - a.y, t.x - a.x);
+        a.x += Math.cos(an) * a.spd * dt;
+        a.y += Math.sin(an) * a.spd * dt;
+      } else if (a.cd <= 0) {
+        a.cd = 1;
+        hitEnemy(t, a.dmg, '#b9a8ff');
+      }
+    } else {
+      const d = dist(a.x, a.y, p.x, p.y);
+      if (d > 50) {
+        const an = Math.atan2(p.y - a.y, p.x - a.x);
+        a.x += Math.cos(an) * a.spd * dt;
+        a.y += Math.sin(an) * a.spd * dt;
+      }
+    }
+    resolve(a, a.r);
+  }
+
+  run.enemies = run.enemies.filter(e => !e.dead);
+  run.allies = run.allies.filter(a => !a.dead);
+
+  // مراحل البوابة
+  if (run.enemies.length === 0 && run.timer <= 0) {
+    if (run.boss) { completeGate(); return; }
+    run.timer = 2;
+  }
+  if (run.timer > 0) {
+    run.timer -= dt;
+    if (run.timer <= 0) {
+      if (run.wave < run.waves) spawnWave();
+      else { run.boss = true; spawnBoss(); }
+    }
+  }
+}
+
+/* ---------- الإدخال ---------- */
+const joy = $('joy'), knob = $('knob');
+function moveJoy(e) {
+  const r = joy.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let dx = e.clientX - cx, dy = e.clientY - cy;
+  const max = r.width / 2 - 28;
+  const d = Math.hypot(dx, dy);
+  const k = d > max ? max / d : 1;
+  dx *= k; dy *= k;
+  knob.style.transform = `translate(${dx}px,${dy}px)`;
+  input.x = dx / max; input.y = dy / max;
+}
+joy.addEventListener('pointerdown', e => { jId = e.pointerId; joy.setPointerCapture(e.pointerId); moveJoy(e); });
+joy.addEventListener('pointermove', e => { if (e.pointerId === jId) moveJoy(e); });
+const endJoy = e => {
+  if (e.pointerId !== jId) return;
+  jId = null; input.x = 0; input.y = 0;
+  knob.style.transform = 'translate(0,0)';
+};
+joy.addEventListener('pointerup', endJoy);
+joy.addEventListener('pointercancel', endJoy);
+
+const atkBtn = $('atk');
+atkBtn.addEventListener('pointerdown', e => { e.preventDefault(); attackHeld = true; playerAttack(); });
+const releaseAtk = () => { attackHeld = false; };
+atkBtn.addEventListener('pointerup', releaseAtk);
+atkBtn.addEventListener('pointercancel', releaseAtk);
+atkBtn.addEventListener('pointerleave', releaseAtk);
+
+function readKeys() {
+  if (jId !== null) return;
+  let x = 0, y = 0;
+  if (keys.arrowleft || keys.a) x--;
+  if (keys.arrowright || keys.d) x++;
+  if (keys.arrowup || keys.w) y--;
+  if (keys.arrowdown || keys.s) y++;
+  input.x = x; input.y = y;
+}
+const SKILL_KEYS = ['strike', 'whirl', 'heal', 'surge'];
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (e.key === ' ') { e.preventDefault(); playerAttack(); }
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= 4) useSkill(SKILL_KEYS[n - 1]);
+});
+window.addEventListener('keyup', e => { delete keys[e.key.toLowerCase()]; });
+
+function renderSkills() {
+  const box = $('skills');
+  box.innerHTML = '';
+  for (const k in SKILLS) {
+    if (!available(k)) continue;
+    const b = document.createElement('button');
+    b.className = 'sk';
+    b.dataset.sk = k;
+    b.innerHTML = SKILLS[k].name + '<div class="cd"></div>';
+    b.addEventListener('pointerdown', e => { e.preventDefault(); useSkill(k); });
+    box.appendChild(b);
+  }
+}
+function updateSkillsUI() {
+  for (const b of $('skills').children) {
+    const cd = run ? (run.cd[b.dataset.sk] || 0) : 0;
+    b.classList.toggle('cool', cd > 0);
+    b.querySelector('.cd').textContent = Math.ceil(cd);
+  }
+}
+
+/* ---------- الرسم ---------- */
+function drawBody(x, y, r, col) {
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2);
+  g.fillStyle = col; g.fill();
+  g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 2; g.stroke();
+}
+function drawBar(x, y, w, ratio, col) {
+  g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x - w / 2, y, w, 4);
+  g.fillStyle = col; g.fillRect(x - w / 2, y, w * Math.max(0, ratio), 4);
+}
+function draw() {
+  g.fillStyle = '#0b0d14'; g.fillRect(0, 0, W, H);
+  if (!run) return;
+  g.fillStyle = '#17132a'; g.fillRect(0, 0, W, H);
+  g.strokeStyle = 'rgba(140,120,220,.08)'; g.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+  for (let y = 0; y < H; y += 40) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+  g.strokeStyle = '#4a3f78'; g.lineWidth = 6; g.strokeRect(10, 10, W - 20, H - 20);
+
+  for (const q of run.pillars) {
+    g.fillStyle = '#2a2440'; g.fillRect(q.x, q.y, q.w, q.h);
+    g.strokeStyle = '#4a3f78'; g.lineWidth = 2; g.strokeRect(q.x, q.y, q.w, q.h);
+  }
+  for (const f of run.fx) {
+    g.globalAlpha = Math.max(0, f.t / 0.3);
+    g.strokeStyle = f.col; g.lineWidth = 3;
+    g.beginPath(); g.arc(f.x, f.y, f.max * (1 - f.t / 0.3), 0, Math.PI * 2); g.stroke();
+  }
+  g.globalAlpha = 1;
+
+  for (const e of run.enemies) {
+    drawBody(e.x, e.y, e.r, e.flash > 0 ? '#fff' : e.col);
+    drawBar(e.x, e.y - e.r - 8, e.r * 2 + 6, e.hp / e.maxHp, '#e0523a');
+  }
+  for (const a of run.allies) {
+    g.globalAlpha = 0.75;
+    drawBody(a.x, a.y, a.r, a.flash > 0 ? '#fff' : a.col);
+    g.globalAlpha = 1;
+    drawBar(a.x, a.y - a.r - 6, a.r * 2 + 6, a.hp / a.maxHp, '#8f7cff');
+  }
+
+  const p = run.p;
+  drawBody(p.x, p.y, 14, p.flash > 0 ? '#fff' : CLASSES[S.cls].col);
+  g.strokeStyle = '#fff'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(p.x, p.y);
+  g.lineTo(p.x + Math.cos(p.face) * 22, p.y + Math.sin(p.face) * 22); g.stroke();
+
+  g.textAlign = 'center';
+  g.font = 'bold 16px Tahoma, Arial, sans-serif';
+  for (const f of floats) {
+    g.globalAlpha = Math.min(1, Math.max(0, f.t));
+    g.fillStyle = f.col;
+    g.fillText(f.txt, f.x, f.y);
+  }
+  g.globalAlpha = 1;
+}
+
+function updateHud() {
+  if (!run || !S) return;
+  $('lbl').textContent = `مستوى ${S.p.level} | ${rankOf(S.p.level)} | ${CLASSES[S.cls].name}`;
+  $('gold').textContent = `ذهب ${S.p.gold} | قتلى ${S.kills}`;
+  $('hp').firstElementChild.style.width = clamp(S.p.hp / maxHp() * 100, 0, 100) + '%';
+  $('mp').firstElementChild.style.width = clamp(S.p.mp / maxMp() * 100, 0, 100) + '%';
+  $('xp').firstElementChild.style.width = clamp(S.p.xp / xpNeed(S.p.level) * 100, 0, 100) + '%';
+  $('wave').textContent = run.boss ? 'حارس البوابة' : `الموجة ${Math.max(1, run.wave)} / ${run.waves}`;
+}
+
+/* ---------- القوائم ---------- */
+function setPlaying(on) {
+  ['hud', 'wave', 'joy', 'skills', 'atk'].forEach(id => $(id).classList.toggle('hidden', !on));
+}
+
+function showMenu(on) {
+  if (on) {
+    setPlaying(false);
+    $('menu').classList.remove('hidden');
+    renderMenu();
+  } else {
+    $('menu').classList.add('hidden');
+  }
+}
+
+function renderMenu() {
+  const m = $('menu');
+  if (!S) {
+    m.innerHTML = `<div class="box"><h1>صيّاد الظلال</h1><p class="small">اختر فئة صيادك لبدء المغامرة</p>` +
+      Object.entries(CLASSES).map(([k, c]) => `<button class="btn" data-act="class" data-v="${k}">${c.name}</button>`).join('') +
+      `</div>`;
+    return;
+  }
+  const p = S.p;
+  let gates = '';
+  for (let t = 1; t <= 5; t++) {
+    const req = 1 + (t - 1) * 4;
+    const locked = p.level < req || (t > 1 && S.maxTier < t - 1);
+    gates += `<button class="btn" ${locked ? 'disabled' : ''} data-act="enter" data-v="${t}">` +
+      `بوابة المستوى ${t}${locked ? ' (مغلقة — يتطلب مستوى ' + req + ')' : ''}</button>`;
+  }
+  m.innerHTML = `<div class="box">
+    <h1>صيّاد الظلال</h1>
+    <p class="small">${CLASSES[S.cls].name} — الرتبة ${rankOf(p.level)} — المستوى ${p.level}${p.awk ? ' — مُستيقظ' : ''}</p>
+    <p>الذهب: ${p.gold}</p>
+    <h3>البوابات</h3>${gates}
+    <h3>القائمة</h3>
+    <button class="btn" data-act="panel" data-v="char">الشخصية والمهارات</button>
+    <button class="btn" data-act="panel" data-v="inv">المخزون والمعدات</button>
+    <button class="btn" data-act="panel" data-v="sh">جيش الظلال</button>
+    <button class="btn" data-act="panel" data-v="quest">المهام</button>
+    <button class="btn" data-act="reset">حذف التقدم</button>
+  </div>`;
+}
+
+function itemTxt(it) { return it ? `${it.name} (+${it.v})` : 'لا شيء'; }
+
+function openPanel(k) { panelKind = k; $('panel').classList.remove('hidden'); renderPanel(); }
+function closePanel() { panelKind = null; $('panel').classList.add('hidden'); }
+
+function renderPanel() {
+  if (!panelKind || !S) return;
+  const p = S.p;
+  let h = '';
+  if (panelKind === 'char') {
+    h = `<h2>الشخصية</h2>
+      <p>المستوى ${p.level} — الرتبة ${rankOf(p.level)} — الخبرة ${p.xp}/${xpNeed(p.level)}</p>
+      <p>نقاط متاحة: ${p.pts}</p>` +
+      [['str', 'القوة'], ['agi', 'السرعة'], ['def', 'الدفاع'], ['int', 'الذكاء']].map(([k, n]) =>
+        `<div class="row"><span>${n}: ${p[k]}</span><button class="mini" data-act="alloc" data-v="${k}" ${p.pts < 1 ? 'disabled' : ''}>+</button></div>`
+      ).join('') +
+      `<p class="small">الصحة ${Math.round(p.hp)}/${maxHp()} — المانا ${maxMp()} — الهجوم ${Math.round(atkDmg())} — الدفاع ${defVal()}</p>` +
+      (p.level >= 10 && !p.awk ? `<button class="btn" data-act="awaken">الصحوة</button>` : '') +
+      (p.awk ? `<p class="small">الصحوة مفعّلة</p>` : '') +
+      `<h3>المهارات</h3>` +
+      Object.entries(SKILLS).map(([k, s]) =>
+        `<div class="row"><span>${s.name}</span><span class="small">${available(k) ? 'مفتوحة' : (s.awk ? 'تتطلب الصحوة' : 'مستوى ' + s.lvl)}</span></div>`
+      ).join('');
+  } else if (panelKind === 'inv') {
+    h = `<h2>المخزون</h2>
+      <p>السلاح: ${itemTxt(p.weapon)}</p>
+      <p>الدرع: ${itemTxt(p.armor)}</p>
+      <p class="small">الحقيبة ${S.inv.length}/20</p>` +
+      (S.inv.length ? S.inv.map(it =>
+        `<div class="row"><span class="rar-${it.rarity}">${it.name} ${RARITY[it.rarity].n} (+${it.v})</span>
+         <span><button class="mini" data-act="equip" data-v="${it.id}">تجهيز</button>
+         <button class="mini" data-act="discard" data-v="${it.id}">إتلاف</button></span></div>`
+      ).join('') : '<p class="small">الحقيبة فارغة</p>');
+  } else if (panelKind === 'sh') {
+    const act = S.active.length;
+    h = `<h2>جيش الظلال</h2>
+      <p>المستدعون: ${act} / ${armyLimit()}</p>
+      <p class="small">يزيد الحد مع كل 4 مستويات</p>` +
+      (S.shadows.length ? S.shadows.map(s => {
+        const on = S.active.includes(s.id);
+        return `<div class="row"><span class="rar-${s.rarity}">${s.name} — ${RARITY[s.rarity].n}</span>
+          <button class="mini" data-act="toggleSh" data-v="${s.id}" ${(!on && act >= armyLimit()) ? 'disabled' : ''}>${on ? 'إلغاء' : 'استدعاء'}</button></div>`;
+      }).join('') : '<p class="small">لم تستخرج أي ظل بعد</p>');
+  } else if (panelKind === 'quest') {
+    h = '<h2>المهام</h2>' + QUESTS.map(q =>
+      `<div class="row"><span>${q.t}</span><span class="small">${S.quests[q.id] ? 'مكتملة' : 'قيد التقدم'}</span></div>`
+    ).join('');
+  }
+  h += `<button class="btn" data-act="close">إغلاق</button>`;
+  $('panel').innerHTML = `<div class="box">${h}</div>`;
+}
+
+function allocate(k) {
+  if (S.p.pts < 1) return;
+  S.p.pts--; S.p[k]++;
+  save(); renderPanel();
+}
+
+function awaken() {
+  if (S.p.level < 10 || S.p.awk) return;
+  S.p.awk = true;
+  S.p.hp = maxHp(); S.p.mp = maxMp();
+  toast('استيقظت قوتك! فُتحت مهارة انفجار الظل');
+  renderSkills(); save(); renderPanel();
+}
+
+function equip(id) {
+  const i = S.inv.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const it = S.inv[i];
+  const cur = S.p[it.slot];
+  S.inv.splice(i, 1);
+  if (cur) S.inv.push(cur);
+  S.p[it.slot] = it;
+  S.p.hp = Math.min(S.p.hp, maxHp());
+  save(); renderPanel();
+}
+
+function discard(id) {
+  S.inv = S.inv.filter(x => x.id !== id);
+  save(); renderPanel();
+}
+
+function toggleShadow(id) {
+  if (S.active.includes(id)) S.active = S.active.filter(x => x !== id);
+  else if (S.active.length < armyLimit()) S.active.push(id);
+  save(); renderPanel();
+}
+
+/* ---------- الأحداث العامة ---------- */
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b || b.disabled) return;
+  const a = b.dataset.act, v = b.dataset.v;
+  if (a === 'class') {
+    S = defaultState(v);
+    S.p.hp = maxHp(); S.p.mp = maxMp();
+    save(); renderMenu();
+  } else if (a === 'enter') enterGate(parseInt(v, 10));
+  else if (a === 'panel') openPanel(v);
+  else if (a === 'close') closePanel();
+  else if (a === 'alloc') allocate(v);
+  else if (a === 'awaken') awaken();
+  else if (a === 'equip') equip(v);
+  else if (a === 'discard') discard(v);
+  else if (a === 'toggleSh') toggleShadow(v);
+  else if (a === 'reset') {
+    if (confirm('حذف كل التقدم؟')) {
+      try { localStorage.removeItem(KEY); } catch (err) {}
+      S = null; closePanel(); renderMenu();
+    }
+  }
+});
+
+/* ---------- التشغيل ---------- */
+S = load();
+if (S) {
+  S.inv = S.inv || []; S.shadows = S.shadows || []; S.active = S.active || [];
+  S.quests = S.quests || {}; S.kills = S.kills || 0; S.clears = S.clears || 0; S.maxTier = S.maxTier || 0;
+  S.p.hp = maxHp(); S.p.mp = maxMp();
+}
+showMenu(true);
+
+let last = performance.now(), saveTimer = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  for (const f of floats) { f.t -= dt; f.y -= 25 * dt; }
+  floats = floats.filter(f => f.t > 0);
+  if (run) {
+    readKeys();
+    if (attackHeld) playerAttack();
+    update(dt);
+    updateHud();
+    updateSkillsUI();
+    saveTimer += dt;
+    if (saveTimer > 15) { saveTimer = 0; save(); }
+  }
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
